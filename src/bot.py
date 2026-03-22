@@ -21,6 +21,19 @@ from src.fetchers.cftc import CFTCFetcher
 from src.fetchers.treasury import TreasuryDirectFetcher
 from src.fetchers.atlanta_fed import AtlantaFedFetcher
 from src.fetchers.forexfactory import ForexFactoryFetcher
+from src.fetchers.fed import FedReserveFetcher
+from src.fetchers.edgar import EDGARFetcher
+from src.fetchers.nyfed import NYFedFetcher
+from src.fetchers.lbma import LBMAFetcher
+from src.fetchers.cleveland_fed import ClevelandFedFetcher
+from src.fetchers.cnn_fg import CNNFearGreedFetcher
+from src.fetchers.opec import OPECFetcher
+from src.fetchers.wgc import WorldGoldFetcher
+from src.fetchers.finanzagentur import FinanzagenturFetcher
+from src.fetchers.iea import IEAFetcher
+from src.fetchers.abs import ABSFetcher
+from src.fetchers.ons import ONSFetcher
+from src.fetchers.ism import ISMFetcher
 
 logger = logging.getLogger("trading_bot")
 
@@ -42,6 +55,19 @@ class TradingBot:
             "cftc": (CFTCFetcher(db), "📊 CFTC COT"),
             "treasury": (TreasuryDirectFetcher(db), "🏛 Treasury"),
             "atlanta": (AtlantaFedFetcher(db), "🏦 Atlanta Fed"),
+            "fed": (FedReserveFetcher(db), "🏛 Fed Reserve"),
+            "edgar": (EDGARFetcher(db), "📄 SEC/EDGAR"),
+            "nyfed": (NYFedFetcher(db), "🏦 NY Fed"),
+            "lbma": (LBMAFetcher(db), "🥇 LBMA"),
+            "cleveland": (ClevelandFedFetcher(db), "🏦 Cleveland Fed"),
+            "cnn": (CNNFearGreedFetcher(db), "📊 CNN Fear&Greed"),
+            "opec": (OPECFetcher(db), "🛢 OPEC"),
+            "wgc": (WorldGoldFetcher(db), "🥇 World Gold Council"),
+            "dfa": (FinanzagenturFetcher(db), "🇩🇪 Finanzagentur"),
+            "iea": (IEAFetcher(db), "⚡ IEA"),
+            "abs": (ABSFetcher(db), "🇦🇺 ABS Australia"),
+            "ons": (ONSFetcher(db), "🇬🇧 UK ONS"),
+            "ism": (ISMFetcher(db), "🏭 ISM PMI"),
         }
 
         # ForexFactory (separate — no AI, just reminders)
@@ -302,19 +328,17 @@ class TradingBot:
             self.db.mark_as_sent(source, item["item_hash"])
             total_cost += result.get("cost_usd", 0)
 
-            if active:
-                message = format_instant_message({
-                    **result,
-                    "source": source,
-                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                })
-                if await self.send_to_channel(message, parse_mode="HTML"):
-                    self.db.mark_queue_sent(queue_id)
-                    sent_count += 1
-            else:
-                queued_count += 1
+            # Manual fetch always sends, regardless of active/silent hours
+            message = format_instant_message({
+                **result,
+                "source": source,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            })
+            if await self.send_to_channel(message, parse_mode="HTML"):
+                self.db.mark_queue_sent(queue_id)
+                sent_count += 1
 
-        mode_info = f"Sent: {sent_count}" if active else f"Queued: {queued_count} (silent hours)"
+        mode_info = f"Sent: {sent_count}"
         await update.message.reply_text(
             f"✅ Done\n{mode_info}\nCost: ${total_cost:.4f}"
         )

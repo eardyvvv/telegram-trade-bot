@@ -32,6 +32,19 @@ SOURCE_INTERVALS = {
     "cftc": (4, 6),
     "treasury": (2, 6),
     "atlanta": (2, 6),
+    "fed": (1, 6),
+    "edgar": (4, 6),
+    "nyfed": (4, 6),
+    "lbma": (12, 12),
+    "cleveland": (4, 6),
+    "cnn": (2, 6),
+    "opec": (6, 12),
+    "wgc": (12, 12),
+    "dfa": (6, 12),
+    "iea": (6, 12),
+    "abs": (12, 12),
+    "ons": (4, 6),
+    "ism": (12, 12),
 }
 
 
@@ -70,7 +83,7 @@ def format_instant_message(item: dict) -> str:
 
     if impact:
         lines.append("")
-        lines.append(f"Возможное влияние: {impact}")
+        lines.append(f"Контекст: {impact}")
 
     lines.append("")
     lines.append(f"Источник: {source.upper()} | {timestamp} UTC")
