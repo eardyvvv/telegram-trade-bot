@@ -1,0 +1,21 @@
+[Unit]
+Description=Trading News Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=botadmin
+WorkingDirectory=/home/botadmin/trading-bot
+ExecStart=/home/botadmin/trading-bot/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/botadmin/trading-bot/data /home/botadmin/trading-bot/logs
+
+[Install]
+WantedBy=multi-user.target
