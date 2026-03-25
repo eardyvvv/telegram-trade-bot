@@ -46,7 +46,7 @@ class IEAFetcher:
 
         except Exception as e:
             logger.error("IEA fetch failed: %s", e)
-            self.db.update_source_status("iea_news", False)
+            self.db.update_source_status("iea", False)
             return []
 
         lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -89,7 +89,7 @@ class IEAFetcher:
         for article in articles:
             item_hash = self._make_hash(article["title"], article["date"])
 
-            if self.db.is_already_sent("iea_news", item_hash):
+            if self.db.is_already_sent("iea", item_hash):
                 continue
 
             new_items.append({
@@ -103,7 +103,7 @@ class IEAFetcher:
                 "item_hash": item_hash,
             })
 
-        self.db.update_source_status("iea_news", True)
+        self.db.update_source_status("iea", True)
         logger.info("IEA check: %d new articles", len(new_items))
         return new_items
 

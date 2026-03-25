@@ -99,6 +99,7 @@ class TradingBot:
             "auto": self._cmd_auto,
             "pause": self._cmd_pause,
             "resume": self._cmd_resume,
+            "importance": self._cmd_importance,
             # Manual triggers
             "fetch": self._cmd_fetch,
             "digest": self._cmd_digest,
@@ -109,7 +110,7 @@ class TradingBot:
             "logs": self._cmd_logs,
             "spending": self._cmd_spending,
             "queue": self._cmd_queue,
-            "sources": self._cmd_sources,
+            "health": self._cmd_health,
         }
         for name, handler in commands.items():
             self.app.add_handler(CommandHandler(name, handler))
@@ -132,22 +133,22 @@ class TradingBot:
             "Trading News Bot\n\n"
             "Controls:\n"
             "/status — Full status overview\n"
-            "/auto on — Start automatic mode\n"
-            "/auto off — Stop automatic mode\n"
+            "/auto on|off — Start/stop automatic mode\n"
             "/pause — Emergency stop\n"
-            "/resume — Resume from pause\n\n"
+            "/resume — Resume from pause\n"
+            "/importance <1-5> — Set min importance for instant messages\n\n"
             "Manual:\n"
             "/fetch <source> <limit> — Fetch & analyze\n"
             "/digest — Generate morning summary\n"
             "/calendar — Refresh ForexFactory events\n"
             "/reminders — Send pending reminders\n"
-            "/markall — Mark all data as seen\n\n"
+            "/markall confirm — Mark all data as seen\n\n"
             "Monitoring:\n"
             "/logs — Recent activity\n"
-            "/spending — Token costs\n"
+            "/spending — AI costs (add 'detail' for breakdown)\n"
             "/queue — Message queue\n"
-            "/sources — Source health\n\n"
-            "Sources: fred, bls, bea, eia, eurostat, cftc, treasury, atlanta"
+            "/health — Source health dashboard\n\n"
+            f"Sources: {', '.join(self.fetchers.keys())}"
         )
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -421,6 +422,34 @@ class TradingBot:
 
         await update.message.reply_text("\n".join(lines))
 
+    async def _cmd_importance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._admin_only(update):
+            return
+        args = context.args
+        current = self.db.get_importance_threshold()
+        if not args:
+            labels = {1: "All (1-5)", 2: "2+ only", 3: "3+ only", 4: "4+ only", 5: "Critical only (5)"}
+            await update.message.reply_text(
+                f"Importance Filter\n\n"
+                f"Current threshold: {current} ({labels.get(current, '?')})\n"
+                f"Messages below threshold go to morning digest only.\n\n"
+                f"Set: /importance <1-5>"
+            )
+            return
+        try:
+            val = int(args[0])
+            if val < 1 or val > 5:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("Use a number 1-5.")
+            return
+        self.db.set_importance_threshold(val)
+        labels = {1: "все сообщения", 2: "важность 2+", 3: "важность 3+", 4: "важность 4+", 5: "только критичные (5)"}
+        await update.message.reply_text(
+            f"✅ Threshold set to {val} — {labels.get(val, '?')}\n"
+            f"Messages with importance < {val} will only appear in morning digest."
+        )
+
     # ========== Monitoring ==========
 
     async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -443,12 +472,15 @@ class TradingBot:
     async def _cmd_spending(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+
+        args = context.args
         stats = self.db.get_today_tokens()
         limit = Config.DAILY_COST_LIMIT_USD
         pct = (stats["cost_total"] / limit * 100) if limit > 0 else 0
         filled = int(pct / 10)
         bar = "█" * filled + "░" * (10 - filled)
-        await update.message.reply_text(
+
+        text = (
             f"AI Spending Today\n\n"
             f"Calls: {stats['call_count']}\n"
             f"Tokens: {stats['input_total']:,} in / {stats['output_total']:,} out\n"
@@ -457,42 +489,87 @@ class TradingBot:
             f"[{bar}] {pct:.1f}%"
         )
 
+        if args and args[0].lower() == "detail":
+            # Per-source breakdown today
+            by_source = self.db.get_spending_by_source_today()
+            if by_source:
+                text += "\n\nBy source today:"
+                for row in by_source:
+                    text += f"\n  {row['source']}: {row['calls']} calls, ${row['cost']:.4f}"
+
+            # 7-day history
+            history = self.db.get_spending_daily_history(7)
+            if history:
+                text += "\n\n7-day history:"
+                total_7d = 0
+                for row in history:
+                    text += f"\n  {row['date']}: {row['calls']} calls, ${row['cost']:.4f}"
+                    total_7d += row["cost"]
+                avg = total_7d / len(history) if history else 0
+                text += f"\n\nAvg daily: ${avg:.4f}"
+                text += f"\nProjected monthly: ${avg * 30:.2f}"
+
+        await update.message.reply_text(text)
+
     async def _cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
         stats = self.db.get_queue_count()
         active = is_active_hours()
+        threshold = self.db.get_importance_threshold()
         mode = "Active (sending)" if active else "Silent (queuing)"
         await update.message.reply_text(
             f"Message Queue\n\n"
             f"Mode: {mode}\n"
+            f"Importance filter: {threshold}+\n"
             f"Pending: {stats['pending']}\n"
             f"Sent: {stats['sent']}\n"
             f"Digested: {stats['digested']}\n"
             f"Total: {stats['total']}"
         )
 
-    async def _cmd_sources(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _cmd_health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
         sources = self.db.get_all_source_statuses()
         if not sources:
-            await update.message.reply_text("No sources registered yet.")
+            await update.message.reply_text("No sources registered yet. Run /markall confirm first.")
             return
+
+        healthy = 0
+        warning = 0
+        failing = 0
         lines = []
+
         for s in sources:
             if not s["enabled"]:
                 icon = "⏹"
             elif s["fail_count"] >= 3:
                 icon = "🔴"
+                failing += 1
             elif s["fail_count"] >= 1:
                 icon = "🟡"
+                warning += 1
             else:
                 icon = "🟢"
+                healthy += 1
+
             last = s["last_success"]
-            last_str = last[5:16] if last else "never"
-            lines.append(f"{icon} {s['source']} — {last_str}")
-        await update.message.reply_text("Source Health\n\n" + "\n".join(lines))
+            if last:
+                last_str = last[5:16]
+            else:
+                last_str = "never"
+
+            err_info = ""
+            if s.get("errors_today", 0) > 0:
+                err_info = f" ({s['errors_today']} err)"
+            if s["fail_count"] > 0 and s.get("last_error_msg"):
+                err_info = f" [{s['last_error_msg'][:40]}]"
+
+            lines.append(f"{icon} {s['source']}: {last_str}{err_info}")
+
+        header = f"Source Health: {healthy} 🟢  {warning} 🟡  {failing} 🔴\n"
+        await update.message.reply_text(header + "\n" + "\n".join(lines))
 
     # ========== Channel Messaging ==========
 

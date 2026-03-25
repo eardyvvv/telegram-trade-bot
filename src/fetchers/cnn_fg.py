@@ -16,8 +16,9 @@ class CNNFearGreedFetcher:
         self.db = db
         self.url = "https://edition.cnn.com/markets/fear-and-greed"
 
-    def _make_hash(self, score: str, date: str) -> str:
-        raw = f"cnn_fg:{score}:{date}"
+    def _make_hash(self, score: int, date: str) -> str:
+        classification = self._classify_score(score)
+        raw = f"cnn:{classification}:{date}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _classify_score(self, score: int) -> str:
@@ -59,7 +60,7 @@ class CNNFearGreedFetcher:
 
         except Exception as e:
             logger.error("CNN Fear & Greed fetch failed: %s", e)
-            self.db.update_source_status("cnn_fg", False)
+            self.db.update_source_status("cnn", False)
             return []
 
         # Parse the score from page text
@@ -111,16 +112,16 @@ class CNNFearGreedFetcher:
 
         if score is None:
             logger.warning("CNN Fear & Greed: could not find score in page")
-            self.db.update_source_status("cnn_fg", False)
+            self.db.update_source_status("cnn", False)
             return []
 
         from datetime import datetime, timezone
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        item_hash = self._make_hash(str(score), today)
+        item_hash = self._make_hash(score, today)
 
-        if self.db.is_already_sent("cnn_fg", item_hash):
-            self.db.update_source_status("cnn_fg", True)
+        if self.db.is_already_sent("cnn", item_hash):
+            self.db.update_source_status("cnn", True)
             return []
 
         classification = self._classify_score(score)
@@ -144,7 +145,7 @@ class CNNFearGreedFetcher:
             "week_ago": week_ago,
         }]
 
-        self.db.update_source_status("cnn_fg", True)
+        self.db.update_source_status("cnn", True)
         logger.info("CNN Fear & Greed: score=%d, prev=%s, week_ago=%s",
                      score, previous_close, week_ago)
         return new_items

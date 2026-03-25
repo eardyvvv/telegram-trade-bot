@@ -81,12 +81,12 @@ class CFTCFetcher:
                 ) as resp:
                     if resp.status != 200:
                         logger.error("CFTC CSV download failed: HTTP %d", resp.status)
-                        self.db.update_source_status("cftc_cot", False)
+                        self.db.update_source_status("cftc", False)
                         return []
                     text = await resp.text(encoding="utf-8", errors="replace")
         except Exception as e:
             logger.error("CFTC download failed: %s", e)
-            self.db.update_source_status("cftc_cot", False)
+            self.db.update_source_status("cftc", False)
             return []
 
         lines = text.strip().split("\n")
@@ -115,7 +115,7 @@ class CFTCFetcher:
 
                     item_hash = self._make_hash(search_term, date, str(oi))
 
-                    if self.db.is_already_sent("cftc_cot", item_hash):
+                    if self.db.is_already_sent("cftc", item_hash):
                         break  # Already sent, skip this contract
 
                     matched_items.append({
@@ -135,7 +135,7 @@ class CFTCFetcher:
                     })
                     break  # Found match, don't check other contracts for this line
 
-        self.db.update_source_status("cftc_cot", True)
+        self.db.update_source_status("cftc", True)
 
         logger.info(
             "CFTC COT check: %d new items from %d lines",

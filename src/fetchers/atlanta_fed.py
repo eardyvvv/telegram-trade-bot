@@ -34,14 +34,14 @@ class AtlantaFedFetcher:
                 ) as resp:
                     if resp.status != 200:
                         logger.error("Atlanta Fed error: HTTP %d", resp.status)
-                        self.db.update_source_status("atlanta_fed", False)
+                        self.db.update_source_status("atlanta", False)
                         return []
 
                     html = await resp.text()
 
         except Exception as e:
             logger.error("Atlanta Fed fetch failed: %s", e)
-            self.db.update_source_status("atlanta_fed", False)
+            self.db.update_source_status("atlanta", False)
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -80,7 +80,7 @@ class AtlantaFedFetcher:
 
             item_hash = self._make_hash(date_str, value)
 
-            if self.db.is_already_sent("atlanta_fed", item_hash):
+            if self.db.is_already_sent("atlanta", item_hash):
                 continue
 
             # Extract clean text for context
@@ -98,7 +98,7 @@ class AtlantaFedFetcher:
                 "item_hash": item_hash,
             })
 
-        self.db.update_source_status("atlanta_fed", True)
+        self.db.update_source_status("atlanta", True)
 
         logger.info(
             "Atlanta Fed check: %d new estimates found",

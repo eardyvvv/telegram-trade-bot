@@ -134,7 +134,7 @@ class FREDFetcher:
 
         # Update source status
         success = True  # If we got here without crashing, FRED API is working
-        fail_count = self.db.update_source_status("fred", success)
+        self.db.update_source_status("fred", success)
 
         logger.info(
             "FRED check complete: %d new data points found", len(new_items)

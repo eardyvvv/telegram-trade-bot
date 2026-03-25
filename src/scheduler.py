@@ -29,18 +29,18 @@ SOURCE_INTERVALS = {
     "bea": (2, 6),
     "eia": (1, 6),
     "eurostat": (4, 6),
-    "cftc": (4, 6),
+    "cftc": (24, 24),
     "treasury": (2, 6),
-    "atlanta": (2, 6),
+    "atlanta": (12, 12),
     "fed": (1, 6),
     "edgar": (4, 6),
     "nyfed": (4, 6),
     "lbma": (12, 12),
     "cleveland": (4, 6),
-    "cnn": (2, 6),
+    "cnn": (12, 12),
     "opec": (6, 12),
     "wgc": (12, 12),
-    "dfa": (6, 12),
+    "dfa": (12, 12),
     "iea": (6, 12),
     "abs": (12, 12),
     "ons": (4, 6),
@@ -174,6 +174,14 @@ class Scheduler:
             max_instances=1,
         )
 
+        # End-of-day summary — 4:00 PM London (start of silent hours)
+        self._scheduler.add_job(
+            self._auto_end_of_day,
+            CronTrigger(hour=16, minute=0, timezone=LONDON_TZ),
+            id="end_of_day",
+            replace_existing=True,
+        )
+
         if not self._scheduler.running:
             self._scheduler.start()
 
@@ -258,6 +266,66 @@ class Scheduler:
         except Exception as e:
             logger.error("Auto: reminder check failed: %s", e)
 
+    async def _auto_end_of_day(self) -> None:
+        """Auto-scheduled end-of-day summary at 4PM London — sent to admin DM."""
+        if self.db.is_paused():
+            return
+
+        logger.info("Auto: generating end-of-day summary")
+
+        try:
+            # Get today's stats
+            stats = self.db.get_today_tokens()
+            queue = self.db.get_queue_count()
+            sources = self.db.get_all_source_statuses()
+
+            healthy = sum(1 for s in sources if s["fail_count"] == 0)
+            failing = sum(1 for s in sources if s["fail_count"] > 0)
+            total_sources = len(sources)
+
+            # Find top importance items sent today
+            top_items = []
+            with self.db._connect() as conn:
+                rows = conn.execute(
+                    """SELECT title, importance FROM message_queue
+                       WHERE sent_to_channel = 1
+                         AND DATE(timestamp) = DATE('now')
+                       ORDER BY importance DESC
+                       LIMIT 3"""
+                ).fetchall()
+                top_items = [dict(r) for r in rows]
+
+            lines = [
+                "📊 Daily Report",
+                "",
+                f"Messages sent: {queue.get('sent', 0)}",
+                f"Queued for digest: {queue.get('pending', 0)}",
+                f"AI calls: {stats['call_count']}",
+                f"AI cost: ${stats['cost_total']:.4f}",
+                f"Sources: {healthy}/{total_sources} healthy"
+                + (f", {failing} failing" if failing > 0 else ""),
+            ]
+
+            if top_items:
+                lines.append("")
+                lines.append("Top news today:")
+                for item in top_items:
+                    lines.append(f"  {'🔴' if item['importance'] >= 4 else '🟡'} ({item['importance']}/5) {item['title']}")
+
+            # List failing sources
+            failing_sources = [s for s in sources if s["fail_count"] > 0]
+            if failing_sources:
+                lines.append("")
+                lines.append("Failing sources:")
+                for s in failing_sources:
+                    lines.append(f"  🔴 {s['source']}: {s.get('last_error_msg', '?')[:50]}")
+
+            await self.alert_fn("\n".join(lines))
+            logger.info("Auto: end-of-day summary sent")
+
+        except Exception as e:
+            logger.error("Auto: end-of-day summary failed: %s", e)
+
     # --- Core processing methods ---
 
     async def run_source(self, source_name: str) -> int:
@@ -271,17 +339,25 @@ class Scheduler:
             new_items = await fetcher.fetch_new_data()
         except Exception as e:
             logger.error("%s fetch crashed: %s", source_name, e)
-            fail_count = self.db.update_source_status(source_name, False)
-            if fail_count >= 3:
+            result = self.db.update_source_status(source_name, False, str(e)[:200])
+            # Alert on first failure of a previously healthy source
+            if not result["was_failing"]:
                 await self.alert_fn(
-                    f"Источник {source_name.upper()} не работает уже {fail_count} раз подряд."
+                    f"⚠️ {source_name.upper()} только что упал: {str(e)[:100]}"
                 )
             return 0
 
         if not new_items:
+            # Check if source just recovered
+            status = self.db.update_source_status(source_name, True)
+            if status["was_failing"]:
+                await self.alert_fn(
+                    f"✅ {source_name.upper()} снова работает"
+                )
             return 0
 
         active = is_active_hours()
+        threshold = self.db.get_importance_threshold()
         processed = 0
 
         for item in new_items:
@@ -303,7 +379,7 @@ class Scheduler:
 
             self.db.mark_as_sent(source_name, item["item_hash"])
 
-            if active:
+            if active and result["importance"] >= threshold:
                 message = format_instant_message({
                     **result,
                     "source": source_name,

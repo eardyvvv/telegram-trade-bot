@@ -50,7 +50,11 @@ class Database:
                     source        TEXT PRIMARY KEY,
                     last_check    TEXT,
                     last_success  TEXT,
+                    last_error    TEXT,
+                    last_error_msg TEXT NOT NULL DEFAULT '',
                     fail_count    INTEGER NOT NULL DEFAULT 0,
+                    checks_today  INTEGER NOT NULL DEFAULT 0,
+                    errors_today  INTEGER NOT NULL DEFAULT 0,
                     enabled       INTEGER NOT NULL DEFAULT 1
                 );
 
@@ -111,6 +115,20 @@ class Database:
                 ("true" if paused else "false",),
             )
 
+    def get_importance_threshold(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM bot_state WHERE key = 'importance_threshold'"
+            ).fetchone()
+            return int(row["value"]) if row else 1
+
+    def set_importance_threshold(self, threshold: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES ('importance_threshold', ?)",
+                (str(threshold),),
+            )
+
     # --- Activity Logging ---
 
     def log_activity(
@@ -167,48 +185,70 @@ class Database:
     # --- Source Status Tracking ---
 
     def update_source_status(
-        self, source: str, success: bool
-    ) -> int:
-        """Update source status. Returns current fail_count."""
+        self, source: str, success: bool, error_msg: str = ""
+    ) -> dict:
+        """Update source status. Returns dict with fail_count and was_failing flag."""
         now = datetime.now(timezone.utc).isoformat()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with self._connect() as conn:
             existing = conn.execute(
-                "SELECT fail_count FROM source_status WHERE source = ?",
+                "SELECT fail_count, last_success, last_check, checks_today, errors_today FROM source_status WHERE source = ?",
                 (source,),
             ).fetchone()
+
+            was_failing = False
 
             if existing is None:
                 fail_count = 0 if success else 1
                 conn.execute(
                     """INSERT INTO source_status
-                       (source, last_check, last_success, fail_count)
-                       VALUES (?, ?, ?, ?)""",
-                    (source, now, now if success else None, fail_count),
+                       (source, last_check, last_success, last_error, last_error_msg,
+                        fail_count, checks_today, errors_today)
+                       VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                    (source, now, now if success else None,
+                     None if success else now, error_msg,
+                     fail_count, 0 if success else 1),
                 )
             elif success:
+                was_failing = existing["fail_count"] > 0
                 fail_count = 0
+                # Reset daily counters if new day
+                checks = existing["checks_today"] + 1
+                errors = existing["errors_today"]
+                if existing["last_check"] and not existing["last_check"].startswith(today):
+                    checks = 1
+                    errors = 0
                 conn.execute(
                     """UPDATE source_status
-                       SET last_check = ?, last_success = ?, fail_count = 0
+                       SET last_check = ?, last_success = ?, fail_count = 0,
+                           checks_today = ?, errors_today = ?
                        WHERE source = ?""",
-                    (now, now, source),
+                    (now, now, checks, errors, source),
                 )
             else:
+                was_failing = existing["fail_count"] > 0
                 fail_count = existing["fail_count"] + 1
+                checks = existing["checks_today"] + 1
+                errors = existing["errors_today"] + 1
+                if existing["last_check"] and not existing["last_check"].startswith(today):
+                    checks = 1
+                    errors = 1
                 conn.execute(
                     """UPDATE source_status
-                       SET last_check = ?, fail_count = ?
+                       SET last_check = ?, last_error = ?, last_error_msg = ?,
+                           fail_count = ?, checks_today = ?, errors_today = ?
                        WHERE source = ?""",
-                    (now, fail_count, source),
+                    (now, now, error_msg[:200], fail_count, checks, errors, source),
                 )
 
-            return fail_count
+            return {"fail_count": fail_count, "was_failing": was_failing}
 
     def get_all_source_statuses(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT source, last_check, last_success,
-                          fail_count, enabled
+                """SELECT source, last_check, last_success, last_error,
+                          last_error_msg, fail_count, checks_today,
+                          errors_today, enabled
                    FROM source_status ORDER BY source"""
             ).fetchall()
             return [dict(r) for r in rows]
@@ -263,6 +303,38 @@ class Database:
                 (f"{today}%",),
             ).fetchone()
             return dict(row)
+
+    def get_spending_by_source_today(self) -> list[dict]:
+        """Get today's spending broken down by source."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT source,
+                       COUNT(*) as calls,
+                       COALESCE(SUM(cost_usd), 0) as cost
+                   FROM token_usage
+                   WHERE timestamp LIKE ?
+                   GROUP BY source
+                   ORDER BY cost DESC""",
+                (f"{today}%",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_spending_daily_history(self, days: int = 7) -> list[dict]:
+        """Get daily spending totals for the last N days."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT
+                       SUBSTR(timestamp, 1, 10) as date,
+                       COUNT(*) as calls,
+                       COALESCE(SUM(cost_usd), 0) as cost
+                   FROM token_usage
+                   GROUP BY SUBSTR(timestamp, 1, 10)
+                   ORDER BY date DESC
+                   LIMIT ?""",
+                (days,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # --- Message Queue ---
 

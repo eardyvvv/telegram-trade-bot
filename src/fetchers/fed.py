@@ -24,13 +24,8 @@ FED_FEEDS = [
         "Гос.долг",
     ),
     (
-        "https://www.federalreserve.gov/feeds/press_speech.xml",
-        "Speeches",
-        "Ставки/ЦБ",
-    ),
-    (
-        "https://www.federalreserve.gov/feeds/press_testimony.xml",
-        "Testimony",
+        "https://www.federalreserve.gov/feeds/press_all.xml",
+        "All Press Releases",
         "Ставки/ЦБ",
     ),
 ]

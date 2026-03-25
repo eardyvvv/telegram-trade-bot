@@ -109,7 +109,7 @@ class ClevelandFedFetcher:
             )
             item_hash = self._make_hash(latest["period"], freq, values_str)
 
-            if self.db.is_already_sent("cleveland_fed", item_hash):
+            if self.db.is_already_sent("cleveland", item_hash):
                 continue
 
             # Format the values for display
@@ -132,7 +132,7 @@ class ClevelandFedFetcher:
                 "detail": latest,
             })
 
-        self.db.update_source_status("cleveland_fed", True)
+        self.db.update_source_status("cleveland", True)
         logger.info("Cleveland Fed check: %d new items", len(new_items))
         return new_items
 
