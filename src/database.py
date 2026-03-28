@@ -491,12 +491,23 @@ class Database:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT title, country, event_time_london, forecast,
-                          previous, reminder_sent
+                """SELECT title, country, event_time_london, event_time_utc,
+                          forecast, previous, reminder_sent
                    FROM ff_events
                    WHERE event_time_utc >= ?
                    ORDER BY event_time_utc ASC
                    LIMIT ?""",
                 (now, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_ff_all_week_events(self) -> list[dict]:
+        """Get all High impact events stored (current week)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT title, country, event_time_london, event_time_utc,
+                          forecast, previous, reminder_sent
+                   FROM ff_events
+                   ORDER BY event_time_utc ASC"""
             ).fetchall()
             return [dict(r) for r in rows]
