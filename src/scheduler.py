@@ -109,7 +109,7 @@ def format_digest_message(digest_text: str, item_count: int) -> str:
 class Scheduler:
     """Controls automatic fetching, analysis, sending, digests, and reminders."""
 
-    def __init__(self, db, analyzer, fetchers, ff_fetcher, send_fn, alert_fn):
+    def __init__(self, db, analyzer, fetchers, ff_fetcher, send_fn, alert_fn, pin_fn=None):
         """
         Args:
             db: Database instance
@@ -118,6 +118,7 @@ class Scheduler:
             ff_fetcher: ForexFactoryFetcher instance
             send_fn: async function to send message to channel
             alert_fn: async function to alert admin
+            pin_fn: async function to send message to channel and pin it
         """
         self.db = db
         self.analyzer = analyzer
@@ -125,6 +126,7 @@ class Scheduler:
         self.ff = ff_fetcher
         self.send_fn = send_fn
         self.alert_fn = alert_fn
+        self.pin_fn = pin_fn or send_fn  # Fall back to regular send
         self._scheduler = AsyncIOScheduler(timezone=LONDON_TZ)
         self._auto_enabled = False
 
@@ -295,13 +297,16 @@ class Scheduler:
                 ).fetchall()
                 top_items = [dict(r) for r in rows]
 
+            total_tokens = stats["input_total"] + stats["output_total"]
+            free_limit = Config.FREE_DAILY_TOKENS
+
             lines = [
                 "📊 Daily Report",
                 "",
                 f"Messages sent: {queue.get('sent', 0)}",
                 f"Queued for digest: {queue.get('pending', 0)}",
                 f"AI calls: {stats['call_count']}",
-                f"AI cost: ${stats['cost_total']:.4f}",
+                f"Tokens: {total_tokens:,} / {free_limit:,} ({total_tokens * 100 // free_limit if free_limit else 0}%)",
                 f"Sources: {healthy}/{total_sources} healthy"
                 + (f", {failing} failing" if failing > 0 else ""),
             ]
@@ -333,6 +338,16 @@ class Scheduler:
         if self.db.is_paused():
             return 0
 
+        # Check if source is muted
+        is_muted = False
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT enabled FROM source_status WHERE source = ?",
+                (source_name,),
+            ).fetchone()
+            if row and not row["enabled"]:
+                is_muted = True
+
         fetcher, label = self.fetchers[source_name]
 
         try:
@@ -354,6 +369,13 @@ class Scheduler:
                 await self.alert_fn(
                     f"✅ {source_name.upper()} снова работает"
                 )
+            return 0
+
+        # If muted, mark items as seen but skip AI and sending
+        if is_muted:
+            for item in new_items:
+                self.db.mark_as_sent(source_name, item["item_hash"])
+            logger.info("Auto: %s muted — %d items marked as seen", source_name, len(new_items))
             return 0
 
         active = is_active_hours()
@@ -443,7 +465,7 @@ class Scheduler:
             return False
 
         message = format_digest_message(result["text"], len(pending))
-        sent = await self.send_fn(message, parse_mode="HTML")
+        sent = await self.pin_fn(message, parse_mode="HTML")
 
         if sent:
             queue_ids = [item["id"] for item in pending]

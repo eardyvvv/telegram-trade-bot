@@ -140,18 +140,61 @@ class AIAnalyzer:
 
         try:
             data = json.loads(cleaned)
-            # Validate required fields
-            required = ["importance", "category", "region", "title", "summary", "impact"]
-            for field in required:
-                if field not in data:
-                    logger.warning("AI JSON missing field: %s", field)
-                    return None
-            # Clamp importance to 1-5
-            data["importance"] = max(1, min(5, int(data["importance"])))
-            return data
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error("Failed to parse AI JSON: %s\nRaw: %s", e, text[:500])
-            return None
+            # Try to repair truncated JSON
+            data = self._repair_truncated_json(cleaned)
+            if data is None:
+                logger.error("Failed to parse AI JSON: %s\nRaw: %s", e, text[:500])
+                return None
+
+        # Validate required fields
+        required = ["importance", "category", "region", "title", "summary"]
+        for field in required:
+            if field not in data:
+                logger.warning("AI JSON missing field: %s", field)
+                return None
+
+        # Fill in missing impact if truncated
+        if "impact" not in data:
+            data["impact"] = ""
+
+        # Clamp importance to 1-5
+        data["importance"] = max(1, min(5, int(data["importance"])))
+        return data
+
+    def _repair_truncated_json(self, text: str) -> dict | None:
+        """Try to repair JSON that was truncated mid-field."""
+        import re
+
+        # Find the last complete key-value pair
+        # Try progressively shorter versions
+        for end_char in ['"', ',', '}']:
+            last_pos = text.rfind(end_char)
+            if last_pos < 0:
+                continue
+
+            # Try to close the JSON at this position
+            attempt = text[:last_pos + 1]
+
+            # If we ended on a quote, close the value and object
+            if end_char == '"':
+                attempt += "\n}"
+            elif end_char == ',':
+                # Remove trailing comma and close
+                attempt = attempt.rstrip(',').rstrip()
+                if not attempt.endswith('}'):
+                    attempt += "\n}"
+            elif end_char == '}':
+                pass  # Already closed
+
+            try:
+                data = json.loads(attempt)
+                logger.info("Repaired truncated JSON successfully")
+                return data
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+        return None
 
     async def analyze(
         self, source: str, raw_data: str
@@ -179,7 +222,7 @@ class AIAnalyzer:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": safe_input},
                 ],
-                max_completion_tokens=4000,
+                max_completion_tokens=8000,
             )
 
             input_tokens = response.usage.prompt_tokens
@@ -259,7 +302,7 @@ class AIAnalyzer:
                     {"role": "system", "content": DIGEST_PROMPT},
                     {"role": "user", "content": safe_input},
                 ],
-                max_completion_tokens=4000,
+                max_completion_tokens=8000,
             )
 
             input_tokens = response.usage.prompt_tokens

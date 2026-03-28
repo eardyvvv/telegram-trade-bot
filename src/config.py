@@ -40,9 +40,10 @@ class Config:
 
     # Token safety limits
     MAX_INPUT_TOKENS: int = 4000        # Truncate any input beyond this
-    DAILY_COST_LIMIT_USD: float = 2.0   # Stop AI calls if daily spend exceeds this
-    INPUT_COST_PER_M: float = 0.25      # GPT-5 Mini: $0.25 per 1M input tokens
-    OUTPUT_COST_PER_M: float = 2.00     # GPT-5 Mini: $2.00 per 1M output tokens
+    DAILY_COST_LIMIT_USD: float = 5.0   # Stop AI calls if daily spend exceeds this
+    INPUT_COST_PER_M: float = 2.50      # GPT-5.4: $2.50 per 1M input tokens
+    OUTPUT_COST_PER_M: float = 15.00    # GPT-5.4: $15.00 per 1M output tokens
+    FREE_DAILY_TOKENS: int = int(os.getenv("FREE_DAILY_TOKENS", "250000"))
 
     @classmethod
     def validate(cls) -> list[str]:

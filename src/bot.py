@@ -1,10 +1,11 @@
 import logging
 from datetime import datetime, timezone
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     ContextTypes,
 )
 
@@ -86,6 +87,7 @@ class TradingBot:
             ff_fetcher=self.ff,
             send_fn=self.send_to_channel,
             alert_fn=self.alert_admin,
+            pin_fn=self.send_to_channel_and_pin,
         )
 
         self._register_handlers()
@@ -100,6 +102,7 @@ class TradingBot:
             "pause": self._cmd_pause,
             "resume": self._cmd_resume,
             "importance": self._cmd_importance,
+            "menu": self._cmd_menu,
             # Manual triggers
             "fetch": self._cmd_fetch,
             "digest": self._cmd_digest,
@@ -115,6 +118,151 @@ class TradingBot:
         for name, handler in commands.items():
             self.app.add_handler(CommandHandler(name, handler))
 
+        # Inline button callbacks
+        self.app.add_handler(CallbackQueryHandler(self._handle_callback))
+
+    # --- Button helpers ---
+
+    def _menu_keyboard(self) -> InlineKeyboardMarkup:
+        """Main menu keyboard — dynamic pause/resume button."""
+        paused = self.db.is_paused()
+        if paused:
+            pause_btn = InlineKeyboardButton("▶️ Resume", callback_data="cb_resume_confirm")
+        else:
+            pause_btn = InlineKeyboardButton("⏸ Pause", callback_data="cb_pause_confirm")
+
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📊 Status", callback_data="cb_status"),
+                InlineKeyboardButton("💰 Spending", callback_data="cb_spending"),
+            ],
+            [
+                InlineKeyboardButton("🏥 Health", callback_data="cb_health"),
+                InlineKeyboardButton("📋 Queue", callback_data="cb_queue"),
+            ],
+            [
+                InlineKeyboardButton("📅 Calendar", callback_data="cb_calendar"),
+                InlineKeyboardButton("🎚 Importance", callback_data="cb_importance"),
+            ],
+            [
+                InlineKeyboardButton("🔇 Mute sources", callback_data="cb_sources"),
+                pause_btn,
+            ],
+        ])
+
+    def _back_to_menu(self) -> InlineKeyboardMarkup:
+        """Just a back-to-menu button."""
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Menu", callback_data="cb_menu")],
+        ])
+
+    def _confirm_keyboard(self, action: str) -> InlineKeyboardMarkup:
+        """Yes/No confirmation for dangerous actions."""
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Yes", callback_data=f"cb_{action}_yes"),
+                InlineKeyboardButton("❌ No", callback_data=f"cb_{action}_no"),
+            ],
+        ])
+
+    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle all inline button callbacks."""
+        query = update.callback_query
+        if query.from_user.id != Config.ADMIN_ID:
+            await query.answer("Access denied")
+            return
+
+        await query.answer()
+        data = query.data
+
+        if data == "cb_menu":
+            await query.message.reply_text("📋 Menu", reply_markup=self._menu_keyboard())
+
+        elif data == "cb_status":
+            await self._send_status(query.message)
+
+        elif data == "cb_spending":
+            await self._send_spending(query.message, detail=False)
+
+        elif data == "cb_spending_detail":
+            await self._send_spending(query.message, detail=True)
+
+        elif data == "cb_health":
+            await self._send_health(query.message)
+
+        elif data == "cb_queue":
+            await self._send_queue(query.message)
+
+        elif data == "cb_calendar":
+            await query.message.reply_text("📅 Refreshing calendar...")
+            await self._send_calendar(query.message)
+
+        elif data == "cb_importance":
+            await self._send_importance(query.message)
+
+        elif data.startswith("cb_imp_set_"):
+            val = int(data.split("_")[-1])
+            self.db.set_importance_threshold(val)
+            await self._send_importance(query.message, confirmed=val)
+
+        elif data == "cb_sources":
+            await self._send_source_toggles(query.message)
+
+        elif data.startswith("cb_toggle_"):
+            source_name = data[len("cb_toggle_"):]
+            await self._toggle_source(query.message, source_name)
+
+        elif data == "cb_pause_confirm":
+            await query.message.reply_text(
+                "⚠️ Are you sure you want to PAUSE the bot?\n"
+                "All auto-checks will stop immediately.",
+                reply_markup=self._confirm_keyboard("pause"),
+            )
+
+        elif data == "cb_pause_yes":
+            self.db.set_paused(True)
+            self.scheduler.stop_auto()
+            self.db.log_activity("system", "pause", "Paused by admin")
+            await query.message.reply_text(
+                "🔴 PAUSED — everything stopped.\n"
+                "Use /resume then /auto on to restart.",
+                reply_markup=self._back_to_menu(),
+            )
+
+        elif data == "cb_pause_no":
+            await query.message.reply_text(
+                "✅ Cancelled. Bot continues running.",
+                reply_markup=self._back_to_menu(),
+            )
+
+        elif data == "cb_resume_confirm":
+            self.db.set_paused(False)
+            self.db.log_activity("system", "resume", "Resumed by admin")
+            logger.info("Bot RESUMED by admin via menu")
+            await query.message.reply_text(
+                "▶️ Resumed.\n\nEnable auto mode?",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Yes, turn on auto", callback_data="cb_auto_on"),
+                        InlineKeyboardButton("❌ No, manual only", callback_data="cb_auto_no"),
+                    ],
+                ]),
+            )
+
+        elif data == "cb_auto_on":
+            self.scheduler.start_auto()
+            await query.message.reply_text(
+                "🟢 Auto mode ON\n\n"
+                "Sources will be checked automatically.",
+                reply_markup=self._back_to_menu(),
+            )
+
+        elif data == "cb_auto_no":
+            await query.message.reply_text(
+                "⚪ Manual mode. Use /fetch for manual checks.",
+                reply_markup=self._back_to_menu(),
+            )
+
     def _is_admin(self, update: Update) -> bool:
         return update.effective_user.id == Config.ADMIN_ID
 
@@ -126,38 +274,46 @@ class TradingBot:
 
     # ========== Admin Controls ==========
 
+    async def _cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._admin_only(update):
+            return
+        await update.message.reply_text("📋 Menu", reply_markup=self._menu_keyboard())
+
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
         await update.message.reply_text(
             "Trading News Bot\n\n"
             "Controls:\n"
+            "/menu — Interactive menu with buttons\n"
             "/status — Full status overview\n"
             "/auto on|off — Start/stop automatic mode\n"
             "/pause — Emergency stop\n"
             "/resume — Resume from pause\n"
-            "/importance <1-5> — Set min importance for instant messages\n\n"
+            "/importance <1-5> — Set min importance\n\n"
             "Manual:\n"
             "/fetch <source> <limit> — Fetch & analyze\n"
             "/digest — Generate morning summary\n"
-            "/calendar — Refresh ForexFactory events\n"
-            "/reminders — Send pending reminders\n"
             "/markall confirm — Mark all data as seen\n\n"
             "Monitoring:\n"
-            "/logs — Recent activity\n"
-            "/spending — AI costs (add 'detail' for breakdown)\n"
+            "/spending — AI usage (add 'detail')\n"
+            "/health — Source health\n"
             "/queue — Message queue\n"
-            "/health — Source health dashboard\n\n"
-            f"Sources: {', '.join(self.fetchers.keys())}"
+            "/logs — Recent activity\n\n"
+            f"Sources: {', '.join(self.fetchers.keys())}",
+            reply_markup=self._menu_keyboard(),
         )
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+        await self._send_status(update.message)
 
+    async def _send_status(self, message) -> None:
         paused = self.db.is_paused()
         active = is_active_hours()
         auto = self.scheduler.is_auto_enabled
+        threshold = self.db.get_importance_threshold()
 
         if paused:
             state = "🔴 PAUSED"
@@ -167,28 +323,31 @@ class TradingBot:
             state = f"⚪ MANUAL {'(active hours)' if active else '(silent hours)'}"
 
         sources = self.db.get_all_source_statuses()
-        failing = sum(1 for s in sources if s["fail_count"] >= 3)
+        healthy = sum(1 for s in sources if s["fail_count"] == 0)
+        failing = sum(1 for s in sources if s["fail_count"] > 0)
 
         queue = self.db.get_queue_count()
         tokens = self.db.get_today_tokens()
+        total_tokens = tokens["input_total"] + tokens["output_total"]
+        free_limit = Config.FREE_DAILY_TOKENS
 
         logs = self.db.get_recent_logs(1)
         last = logs[0]["timestamp"][11:16] if logs else "—"
 
-        # Scheduled jobs info
+        jobs_str = ""
         if auto:
             jobs = self.scheduler.get_jobs_info()
             jobs_str = f"\nJobs: {len(jobs)}"
-        else:
-            jobs_str = ""
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"📊 Status\n\n"
             f"State: {state}{jobs_str}\n"
-            f"Sources: {len(sources)} tracked, {failing} failing\n"
-            f"Queue: {queue['pending']} pending, {queue['sent']} sent today\n"
-            f"AI cost today: ${tokens['cost_total']:.4f}\n"
-            f"Last activity: {last} UTC"
+            f"Importance: {threshold}+\n"
+            f"Sources: {healthy} 🟢  {failing} {'🔴' if failing else ''}\n"
+            f"Queue: {queue['pending']} pending, {queue['sent']} sent\n"
+            f"Tokens today: {total_tokens:,} / {free_limit:,}\n"
+            f"Last activity: {last} UTC",
+            reply_markup=self._menu_keyboard(),
         )
 
     async def _cmd_auto(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -248,8 +407,13 @@ class TradingBot:
         self.db.log_activity("system", "resume", "Resumed by admin")
         logger.info("Bot RESUMED by admin")
         await update.message.reply_text(
-            "▶️ Resumed. Auto mode is still OFF.\n"
-            "Use /auto on to restart automatic scheduling."
+            "▶️ Resumed.\n\nEnable auto mode?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Yes, turn on auto", callback_data="cb_auto_on"),
+                    InlineKeyboardButton("❌ No, manual only", callback_data="cb_auto_no"),
+                ],
+            ]),
         )
 
     # ========== Manual Triggers ==========
@@ -433,7 +597,8 @@ class TradingBot:
                 f"Importance Filter\n\n"
                 f"Current threshold: {current} ({labels.get(current, '?')})\n"
                 f"Messages below threshold go to morning digest only.\n\n"
-                f"Set: /importance <1-5>"
+                f"Set: /importance <1-5>",
+                reply_markup=self._back_to_menu(),
             )
             return
         try:
@@ -447,7 +612,8 @@ class TradingBot:
         labels = {1: "все сообщения", 2: "важность 2+", 3: "важность 3+", 4: "важность 4+", 5: "только критичные (5)"}
         await update.message.reply_text(
             f"✅ Threshold set to {val} — {labels.get(val, '?')}\n"
-            f"Messages with importance < {val} will only appear in morning digest."
+            f"Messages with importance < {val} will only appear in morning digest.",
+            reply_markup=self._back_to_menu(),
         )
 
     # ========== Monitoring ==========
@@ -455,9 +621,12 @@ class TradingBot:
     async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+        await self._send_logs(update.message)
+
+    async def _send_logs(self, message) -> None:
         logs = self.db.get_recent_logs(10)
         if not logs:
-            await update.message.reply_text("No activity yet.")
+            await message.reply_text("No activity yet.", reply_markup=self._back_to_menu())
             return
         lines = []
         for log in logs:
@@ -467,73 +636,103 @@ class TradingBot:
             if len(summary) > 60:
                 summary = summary[:57] + "..."
             lines.append(f"{icon} {time_str} {log['source']}: {summary}")
-        await update.message.reply_text("Recent Activity\n\n" + "\n".join(lines))
+        await message.reply_text(
+            "Recent Activity\n\n" + "\n".join(lines),
+            reply_markup=self._back_to_menu(),
+        )
 
     async def _cmd_spending(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+        detail = bool(context.args and context.args[0].lower() == "detail")
+        await self._send_spending(update.message, detail=detail)
 
-        args = context.args
+    async def _send_spending(self, message, detail: bool = False) -> None:
         stats = self.db.get_today_tokens()
-        limit = Config.DAILY_COST_LIMIT_USD
-        pct = (stats["cost_total"] / limit * 100) if limit > 0 else 0
-        filled = int(pct / 10)
+        free_limit = Config.FREE_DAILY_TOKENS
+        total_tokens = stats["input_total"] + stats["output_total"]
+        pct = (total_tokens / free_limit * 100) if free_limit > 0 else 0
+        filled = min(10, int(pct / 10))
         bar = "█" * filled + "░" * (10 - filled)
 
+        # Calculate paid cost (only for overage)
+        if total_tokens > free_limit:
+            overage_in = max(0, stats["input_total"] - int(free_limit * 0.8))
+            overage_out = max(0, stats["output_total"] - int(free_limit * 0.2))
+            paid = (overage_in / 1_000_000) * Config.INPUT_COST_PER_M + \
+                   (overage_out / 1_000_000) * Config.OUTPUT_COST_PER_M
+            cost_line = f"⚠️ OVER LIMIT — Paid: ${paid:.4f}"
+        else:
+            cost_line = f"Free remaining: {free_limit - total_tokens:,} tokens"
+
         text = (
-            f"AI Spending Today\n\n"
+            f"💰 AI Usage Today\n\n"
+            f"Tokens: {total_tokens:,} / {free_limit:,}\n"
+            f"[{bar}] {pct:.1f}%\n"
+            f"Input: {stats['input_total']:,}  |  Output: {stats['output_total']:,}\n"
             f"Calls: {stats['call_count']}\n"
-            f"Tokens: {stats['input_total']:,} in / {stats['output_total']:,} out\n"
-            f"Cost: ${stats['cost_total']:.4f}\n"
-            f"Limit: ${limit:.2f}\n"
-            f"[{bar}] {pct:.1f}%"
+            f"{cost_line}"
         )
 
-        if args and args[0].lower() == "detail":
-            # Per-source breakdown today
+        if detail:
             by_source = self.db.get_spending_by_source_today()
             if by_source:
                 text += "\n\nBy source today:"
                 for row in by_source:
-                    text += f"\n  {row['source']}: {row['calls']} calls, ${row['cost']:.4f}"
+                    text += f"\n  {row['source']}: {row['calls']} calls"
 
-            # 7-day history
             history = self.db.get_spending_daily_history(7)
             if history:
                 text += "\n\n7-day history:"
-                total_7d = 0
+                total_7d_tokens = 0
                 for row in history:
-                    text += f"\n  {row['date']}: {row['calls']} calls, ${row['cost']:.4f}"
-                    total_7d += row["cost"]
-                avg = total_7d / len(history) if history else 0
-                text += f"\n\nAvg daily: ${avg:.4f}"
-                text += f"\nProjected monthly: ${avg * 30:.2f}"
+                    text += f"\n  {row['date']}: {row['calls']} calls"
+                    total_7d_tokens += 1
 
-        await update.message.reply_text(text)
+            keyboard = self._back_to_menu()
+        else:
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📊 Detail", callback_data="cb_spending_detail"),
+                    InlineKeyboardButton("📋 Menu", callback_data="cb_menu"),
+                ],
+            ])
+
+        await message.reply_text(text, reply_markup=keyboard)
 
     async def _cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+        await self._send_queue(update.message)
+
+    async def _send_queue(self, message) -> None:
         stats = self.db.get_queue_count()
         active = is_active_hours()
         threshold = self.db.get_importance_threshold()
         mode = "Active (sending)" if active else "Silent (queuing)"
-        await update.message.reply_text(
-            f"Message Queue\n\n"
+        await message.reply_text(
+            f"📋 Message Queue\n\n"
             f"Mode: {mode}\n"
             f"Importance filter: {threshold}+\n"
             f"Pending: {stats['pending']}\n"
             f"Sent: {stats['sent']}\n"
             f"Digested: {stats['digested']}\n"
-            f"Total: {stats['total']}"
+            f"Total: {stats['total']}",
+            reply_markup=self._back_to_menu(),
         )
 
     async def _cmd_health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._admin_only(update):
             return
+        await self._send_health(update.message)
+
+    async def _send_health(self, message) -> None:
         sources = self.db.get_all_source_statuses()
         if not sources:
-            await update.message.reply_text("No sources registered yet. Run /markall confirm first.")
+            await message.reply_text(
+                "No sources registered yet. Run /markall confirm first.",
+                reply_markup=self._back_to_menu(),
+            )
             return
 
         healthy = 0
@@ -568,8 +767,165 @@ class TradingBot:
 
             lines.append(f"{icon} {s['source']}: {last_str}{err_info}")
 
-        header = f"Source Health: {healthy} 🟢  {warning} 🟡  {failing} 🔴\n"
-        await update.message.reply_text(header + "\n" + "\n".join(lines))
+        header = f"🏥 Source Health: {healthy} 🟢  {warning} 🟡  {failing} 🔴\n"
+        await message.reply_text(
+            header + "\n" + "\n".join(lines),
+            reply_markup=self._back_to_menu(),
+        )
+
+    async def _send_calendar(self, message) -> None:
+        """Refresh ForexFactory calendar, then show full week calendar."""
+        try:
+            new_count = await self.ff.store_events()
+        except Exception as e:
+            logger.error("Calendar refresh failed: %s", e)
+            new_count = 0
+
+        events = self.db.get_ff_all_week_events()
+        if not events:
+            await message.reply_text(
+                f"📅 Calendar refreshed ({new_count} new).\nNo High impact events this week.",
+                reply_markup=self._back_to_menu(),
+            )
+            return
+
+        now_utc = datetime.now(timezone.utc).isoformat()
+
+        lines = [f"📅 This Week — High Impact ({len(events)} events)\n"]
+        current_day = None
+
+        for e in events:
+            london_time = e.get("event_time_london", "")
+
+            # Parse "HH:MM, DD Month YYYY" format
+            if ", " in london_time:
+                time_part, date_part = london_time.split(", ", 1)
+            else:
+                time_part = ""
+                date_part = london_time
+
+            # Group by date
+            if date_part and date_part != current_day:
+                current_day = date_part
+                lines.append(f"\n{date_part}:")
+
+            # Determine status
+            is_past = e.get("event_time_utc", "") < now_utc
+            if is_past:
+                icon = "✅"
+            elif e["reminder_sent"]:
+                icon = "🔔"
+            else:
+                icon = "⏳"
+
+            parts = []
+            if e.get("forecast"):
+                parts.append(f"F: {e['forecast']}")
+            if e.get("previous"):
+                parts.append(f"P: {e['previous']}")
+            extra = f" ({' | '.join(parts)})" if parts else ""
+
+            lines.append(f"  {icon} {time_part} {e['title']} — {e['country']}{extra}")
+
+        await message.reply_text(
+            "\n".join(lines),
+            reply_markup=self._back_to_menu(),
+        )
+
+    async def _send_importance(self, message, confirmed: int | None = None) -> None:
+        """Show importance threshold with selection buttons."""
+        current = self.db.get_importance_threshold()
+        labels = {1: "All", 2: "2+", 3: "3+", 4: "4+", 5: "5"}
+
+        if confirmed:
+            text = f"✅ Set to {labels.get(confirmed, '?')}\n\n"
+        else:
+            text = ""
+
+        text += (
+            f"🎚 Importance Filter\n\n"
+            f"Messages below threshold go to morning digest only.\n"
+            f"Select threshold:"
+        )
+
+        buttons = []
+        for val in range(1, 6):
+            check = "✅ " if val == current else ""
+            buttons.append([InlineKeyboardButton(
+                f"{check}{labels[val]}",
+                callback_data=f"cb_imp_set_{val}",
+            )])
+
+        buttons.append([InlineKeyboardButton("📋 Menu", callback_data="cb_menu")])
+
+        await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+    async def _send_source_toggles(self, message) -> None:
+        """Show all sources with mute/unmute toggle buttons."""
+        sources = self.db.get_all_source_statuses()
+        source_keys = list(self.fetchers.keys())
+
+        # Build enabled map from DB
+        enabled_map = {}
+        for s in sources:
+            enabled_map[s["source"]] = s.get("enabled", 1)
+
+        buttons = []
+        row = []
+        for key in source_keys:
+            is_enabled = enabled_map.get(key, 1)
+            icon = "🔊" if is_enabled else "🔇"
+            row.append(InlineKeyboardButton(
+                f"{icon} {key}",
+                callback_data=f"cb_toggle_{key}",
+            ))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([InlineKeyboardButton("📋 Menu", callback_data="cb_menu")])
+
+        muted = sum(1 for v in enabled_map.values() if not v)
+        header = f"🔇 Source Toggles ({muted} muted)\nTap to toggle:"
+
+        await message.reply_text(header, reply_markup=InlineKeyboardMarkup(buttons))
+
+    async def _toggle_source(self, message, source_name: str) -> None:
+        """Toggle a source on/off and refresh the buttons."""
+        if source_name not in self.fetchers:
+            return
+
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT enabled FROM source_status WHERE source = ?",
+                (source_name,),
+            ).fetchone()
+
+            if row is None:
+                # Source not in DB yet, insert as disabled
+                conn.execute(
+                    """INSERT INTO source_status
+                       (source, last_check, fail_count, enabled)
+                       VALUES (?, ?, 0, 0)""",
+                    (source_name, datetime.now(timezone.utc).isoformat()),
+                )
+                new_state = 0
+            else:
+                new_state = 0 if row["enabled"] else 1
+                conn.execute(
+                    "UPDATE source_status SET enabled = ? WHERE source = ?",
+                    (new_state, source_name),
+                )
+
+        action = "unmuted" if new_state else "muted"
+        logger.info("Source %s %s by admin", source_name, action)
+        self.db.log_activity("system", "toggle_source", f"{source_name} {action}")
+
+        # Refresh the toggle display
+        await self._send_source_toggles(message)
 
     # ========== Channel Messaging ==========
 
@@ -584,6 +940,25 @@ class TradingBot:
             return True
         except Exception as e:
             logger.error("Channel send failed: %s", e)
+            return False
+
+    async def send_to_channel_and_pin(self, text: str, parse_mode: str = "HTML") -> bool:
+        """Send message to channel and pin it (without unpinning previous pins)."""
+        try:
+            msg = await self.app.bot.send_message(
+                chat_id=Config.CHANNEL_ID,
+                text=text,
+                parse_mode=parse_mode,
+                disable_web_page_preview=True,
+            )
+            await self.app.bot.pin_chat_message(
+                chat_id=Config.CHANNEL_ID,
+                message_id=msg.message_id,
+                disable_notification=True,
+            )
+            return True
+        except Exception as e:
+            logger.error("Channel send+pin failed: %s", e)
             return False
 
     async def alert_admin(self, text: str) -> None:
