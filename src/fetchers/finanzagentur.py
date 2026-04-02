@@ -60,7 +60,7 @@ class FinanzagenturFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("Finanzagentur fetch failed: %s", e)
+            logger.warning("Finanzagentur fetch failed: %s", e)
             self.db.update_source_status("dfa", False)
             return []
 

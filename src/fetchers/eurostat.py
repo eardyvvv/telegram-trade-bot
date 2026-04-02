@@ -112,7 +112,7 @@ class EurostatFetcher:
                     timeout=aiohttp.ClientTimeout(total=20),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error(
+                        logger.warning(
                             "Eurostat API error for %s: HTTP %d",
                             dataset_id,
                             resp.status,
@@ -141,7 +141,7 @@ class EurostatFetcher:
             return periods, values
 
         except Exception as e:
-            logger.error("Eurostat fetch failed for %s: %s", dataset_id, e)
+            logger.warning("Eurostat fetch failed for %s: %s", dataset_id, e)
             return [], []
 
     async def fetch_new_data(self, limit: int | None = None) -> list[dict]:

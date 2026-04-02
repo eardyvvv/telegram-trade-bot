@@ -56,8 +56,7 @@ class BLSFetcher:
         payload = {
             "seriesid": series_ids,
             "registrationkey": Config.BLS_API_KEY,
-            "startyear": str(datetime.now().year - 1),
-            "endyear": str(datetime.now().year),
+            "latest": True,  # Only get the most recent data points
         }
 
         try:
@@ -68,13 +67,13 @@ class BLSFetcher:
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("BLS API error: HTTP %d", resp.status)
+                        logger.warning("BLS API error: HTTP %d", resp.status)
                         return {}
 
                     data = await resp.json()
 
             if data.get("status") != "REQUEST_SUCCEEDED":
-                logger.error(
+                logger.warning(
                     "BLS API error: %s", data.get("message", "unknown")
                 )
                 return {}
@@ -88,7 +87,7 @@ class BLSFetcher:
             return results
 
         except Exception as e:
-            logger.error("BLS fetch failed: %s", e)
+            logger.warning("BLS fetch failed: %s", e)
             return {}
 
     async def fetch_new_data(self, limit: int | None = None) -> list[dict]:

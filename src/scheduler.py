@@ -48,10 +48,15 @@ SOURCE_INTERVALS = {
 }
 
 
-def is_active_hours() -> bool:
-    """Check if we're in the active sending window (7AM-4PM London)."""
+def is_active_hours(db=None) -> bool:
+    """Check if we're in the active sending window (London time)."""
     now_london = datetime.now(LONDON_TZ)
-    return 7 <= now_london.hour < 16
+    start = 7
+    end = 16
+    if db:
+        start = int(db.get_bot_state("active_start", "7"))
+        end = int(db.get_bot_state("active_end", "16"))
+    return start <= now_london.hour < end
 
 
 def format_instant_message(item: dict) -> str:
@@ -83,7 +88,13 @@ def format_instant_message(item: dict) -> str:
 
     if impact:
         lines.append("")
-        lines.append(f"Контекст: {impact}")
+        # Split "context. Возможное влияние на: ..." into two display lines
+        if "Возможное влияние на:" in impact:
+            parts = impact.split("Возможное влияние на:", 1)
+            lines.append(f"Контекст: {parts[0].strip()}")
+            lines.append(f"Возможное влияние на:{parts[1]}")
+        else:
+            lines.append(f"Контекст: {impact}")
 
     lines.append("")
     lines.append(f"Источник: {source.upper()} | {timestamp} UTC")
@@ -151,10 +162,11 @@ class Scheduler:
                 max_instances=1,
             )
 
-        # Morning digest — 7:00 AM London
+        # Morning digest — at start of active hours
+        digest_hour = int(self.db.get_bot_state("active_start", "7"))
         self._scheduler.add_job(
             self._auto_morning_digest,
-            CronTrigger(hour=7, minute=0, timezone=LONDON_TZ),
+            CronTrigger(hour=digest_hour, minute=0, timezone=LONDON_TZ),
             id="morning_digest",
             replace_existing=True,
         )
@@ -179,7 +191,7 @@ class Scheduler:
         # End-of-day summary — 4:00 PM London (start of silent hours)
         self._scheduler.add_job(
             self._auto_end_of_day,
-            CronTrigger(hour=16, minute=0, timezone=LONDON_TZ),
+            CronTrigger(hour=int(self.db.get_bot_state("active_end", "16")), minute=0, timezone=LONDON_TZ),
             id="end_of_day",
             replace_existing=True,
         )
@@ -188,6 +200,7 @@ class Scheduler:
             self._scheduler.start()
 
         self._auto_enabled = True
+        self.db.set_bot_state("auto_mode", "true")
         self.db.log_activity("system", "auto_on", "Automatic mode enabled")
         logger.info("Auto mode ENABLED — scheduler started with %d jobs",
                      len(self._scheduler.get_jobs()))
@@ -199,6 +212,7 @@ class Scheduler:
 
         self._scheduler.remove_all_jobs()
         self._auto_enabled = False
+        self.db.set_bot_state("auto_mode", "false")
         self.db.log_activity("system", "auto_off", "Automatic mode disabled")
         logger.info("Auto mode DISABLED — all jobs removed")
 
@@ -254,7 +268,7 @@ class Scheduler:
             return
 
         # Only send reminders during active hours
-        if not is_active_hours():
+        if not is_active_hours(self.db):
             return
 
         try:
@@ -353,22 +367,17 @@ class Scheduler:
         try:
             new_items = await fetcher.fetch_new_data()
         except Exception as e:
-            logger.error("%s fetch crashed: %s", source_name, e)
-            result = self.db.update_source_status(source_name, False, str(e)[:200])
-            # Alert on first failure of a previously healthy source
-            if not result["was_failing"]:
-                await self.alert_fn(
-                    f"⚠️ {source_name.upper()} только что упал: {str(e)[:100]}"
-                )
+            err_str = str(e)[:200]
+            # Network errors are expected — log as warning, not error
+            if any(kw in err_str.lower() for kw in ["timeout", "reset", "resolution", "connect", "ssl", "504", "503", "502"]):
+                logger.warning("%s fetch failed (network): %s", source_name, err_str)
+            else:
+                logger.error("%s fetch crashed: %s", source_name, err_str)
+            self.db.update_source_status(source_name, False, err_str)
             return 0
 
         if not new_items:
-            # Check if source just recovered
-            status = self.db.update_source_status(source_name, True)
-            if status["was_failing"]:
-                await self.alert_fn(
-                    f"✅ {source_name.upper()} снова работает"
-                )
+            self.db.update_source_status(source_name, True)
             return 0
 
         # If muted, mark items as seen but skip AI and sending
@@ -378,7 +387,7 @@ class Scheduler:
             logger.info("Auto: %s muted — %d items marked as seen", source_name, len(new_items))
             return 0
 
-        active = is_active_hours()
+        active = is_active_hours(self.db)
         threshold = self.db.get_importance_threshold()
         processed = 0
 

@@ -29,12 +29,6 @@ class TreasuryDirectFetcher:
         params = {
             "sort": "-auction_date",
             "page[size]": str(fetch_count),
-            "filter": "high_yield:gt:0",
-            "fields": (
-                "cusip,security_type,security_term,auction_date,issue_date,"
-                "maturity_date,high_yield,bid_to_cover_ratio,"
-                "total_accepted,total_tendered"
-            ),
         }
 
         try:
@@ -45,14 +39,14 @@ class TreasuryDirectFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("TreasuryDirect API error: HTTP %d", resp.status)
+                        logger.warning("TreasuryDirect API error: HTTP %d", resp.status)
                         self.db.update_source_status("treasury", False)
                         return []
 
                     data = await resp.json()
 
         except Exception as e:
-            logger.error("TreasuryDirect fetch failed: %s", e)
+            logger.warning("TreasuryDirect fetch failed: %s", e)
             self.db.update_source_status("treasury", False)
             return []
 
@@ -66,13 +60,13 @@ class TreasuryDirectFetcher:
             security_term = row.get("security_term", "")
             high_yield = row.get("high_yield", "")
             bid_cover = row.get("bid_to_cover_ratio", "")
-            interest_rate = ""
+            interest_rate = row.get("interest_rate", "")
 
             if not cusip or not auction_date:
                 continue
 
             # Skip auctions that haven't happened yet (no yield data)
-            if not high_yield:
+            if not high_yield or high_yield == "null":
                 continue
 
             item_hash = self._make_hash(cusip, auction_date)
@@ -116,7 +110,7 @@ class TreasuryDirectFetcher:
                 f"(CUSIP: {item['series_id']}, дата аукциона: {item['date']}):\n"
                 f"  Доходность (High Yield): {item['high_yield']}%\n"
                 f"  Bid-to-Cover Ratio: {item['bid_to_cover']}\n"
-                f"  Принято: {item.get('total_accepted', 'н/д')}"
+                f"  Купонная ставка: {item['interest_rate']}%"
             )
 
         return "\n".join(lines)

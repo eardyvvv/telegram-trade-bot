@@ -125,7 +125,7 @@ class ISMFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("ISM fetch failed for %s: %s", report_type, e)
+            logger.warning("ISM fetch failed for %s: %s", report_type, e)
 
         return None
 

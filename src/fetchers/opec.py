@@ -45,7 +45,7 @@ class OPECFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("OPEC fetch failed: %s", e)
+            logger.warning("OPEC fetch failed: %s", e)
             self.db.update_source_status("opec", False)
             return []
 

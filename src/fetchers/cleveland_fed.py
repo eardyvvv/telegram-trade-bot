@@ -88,13 +88,13 @@ class ClevelandFedFetcher:
                         timeout=aiohttp.ClientTimeout(total=15),
                     ) as resp:
                         if resp.status != 200:
-                            logger.error("Cleveland Fed error: HTTP %d", resp.status)
+                            logger.warning("Cleveland Fed error: HTTP %d", resp.status)
                             continue
                         import json
                         data = json.loads(await resp.text())
 
             except Exception as e:
-                logger.error("Cleveland Fed fetch failed: %s", e)
+                logger.warning("Cleveland Fed fetch failed: %s", e)
                 continue
 
             latest = self._extract_latest(data)

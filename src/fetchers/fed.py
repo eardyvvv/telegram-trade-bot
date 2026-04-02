@@ -60,12 +60,12 @@ class FedReserveFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("Fed RSS error for %s: HTTP %d", feed_url, resp.status)
+                        logger.warning("Fed RSS error for %s: HTTP %d", feed_url, resp.status)
                         return []
                     text = await resp.text()
 
         except Exception as e:
-            logger.error("Fed RSS fetch failed for %s: %s", feed_url, e)
+            logger.warning("Fed RSS fetch failed for %s: %s", feed_url, e)
             return []
 
         items = []

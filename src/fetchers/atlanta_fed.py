@@ -33,14 +33,14 @@ class AtlantaFedFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("Atlanta Fed error: HTTP %d", resp.status)
+                        logger.warning("Atlanta Fed error: HTTP %d", resp.status)
                         self.db.update_source_status("atlanta", False)
                         return []
 
                     html = await resp.text()
 
         except Exception as e:
-            logger.error("Atlanta Fed fetch failed: %s", e)
+            logger.warning("Atlanta Fed fetch failed: %s", e)
             self.db.update_source_status("atlanta", False)
             return []
 
