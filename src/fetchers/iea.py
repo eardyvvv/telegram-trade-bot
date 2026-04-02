@@ -45,7 +45,7 @@ class IEAFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("IEA fetch failed: %s", e)
+            logger.warning("IEA fetch failed: %s", e)
             self.db.update_source_status("iea", False)
             return []
 

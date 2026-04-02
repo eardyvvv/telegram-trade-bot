@@ -124,13 +124,7 @@ class TradingBot:
     # --- Button helpers ---
 
     def _menu_keyboard(self) -> InlineKeyboardMarkup:
-        """Main menu keyboard — dynamic pause/resume button."""
-        paused = self.db.is_paused()
-        if paused:
-            pause_btn = InlineKeyboardButton("▶️ Resume", callback_data="cb_resume_confirm")
-        else:
-            pause_btn = InlineKeyboardButton("⏸ Pause", callback_data="cb_pause_confirm")
-
+        """Main menu keyboard."""
         return InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("📊 Status", callback_data="cb_status"),
@@ -138,15 +132,32 @@ class TradingBot:
             ],
             [
                 InlineKeyboardButton("🏥 Health", callback_data="cb_health"),
+                InlineKeyboardButton("📅 Calendar", callback_data="cb_calendar"),
+            ],
+            [
+                InlineKeyboardButton("⚙️ Settings", callback_data="cb_settings"),
+            ],
+        ])
+
+    def _settings_keyboard(self) -> InlineKeyboardMarkup:
+        """Settings page keyboard."""
+        paused = self.db.is_paused()
+        pause_btn = InlineKeyboardButton("▶️ Resume", callback_data="cb_resume_confirm") if paused else InlineKeyboardButton("⏸ Pause", callback_data="cb_pause_confirm")
+
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🎚 Importance", callback_data="cb_importance"),
+                InlineKeyboardButton("🔇 Mute sources", callback_data="cb_sources"),
+            ],
+            [
+                InlineKeyboardButton("🕐 Active hours", callback_data="cb_hours"),
                 InlineKeyboardButton("📋 Queue", callback_data="cb_queue"),
             ],
             [
-                InlineKeyboardButton("📅 Calendar", callback_data="cb_calendar"),
-                InlineKeyboardButton("🎚 Importance", callback_data="cb_importance"),
+                pause_btn,
             ],
             [
-                InlineKeyboardButton("🔇 Mute sources", callback_data="cb_sources"),
-                pause_btn,
+                InlineKeyboardButton("📋 Menu", callback_data="cb_menu"),
             ],
         ])
 
@@ -177,6 +188,17 @@ class TradingBot:
 
         if data == "cb_menu":
             await query.message.reply_text("📋 Menu", reply_markup=self._menu_keyboard())
+
+        elif data == "cb_settings":
+            start = self.db.get_bot_state("active_start", "7")
+            end = self.db.get_bot_state("active_end", "16")
+            threshold = self.db.get_importance_threshold()
+            await query.message.reply_text(
+                f"⚙️ Settings\n\n"
+                f"Active hours: {start}:00 — {end}:00 London\n"
+                f"Importance: {threshold}+",
+                reply_markup=self._settings_keyboard(),
+            )
 
         elif data == "cb_status":
             await self._send_status(query.message)
@@ -211,6 +233,25 @@ class TradingBot:
         elif data.startswith("cb_toggle_"):
             source_name = data[len("cb_toggle_"):]
             await self._toggle_source(query.message, source_name)
+
+        elif data == "cb_hours":
+            await self._send_hours(query.message)
+
+        elif data == "cb_hours_start":
+            await self._send_hours_picker(query.message, "start")
+
+        elif data == "cb_hours_end":
+            await self._send_hours_picker(query.message, "end")
+
+        elif data.startswith("cb_hset_start_"):
+            hour = data.split("_")[-1]
+            self.db.set_bot_state("active_start", hour)
+            await self._send_hours(query.message, confirmed=f"Start set to {hour}:00")
+
+        elif data.startswith("cb_hset_end_"):
+            hour = data.split("_")[-1]
+            self.db.set_bot_state("active_end", hour)
+            await self._send_hours(query.message, confirmed=f"End set to {hour}:00")
 
         elif data == "cb_pause_confirm":
             await query.message.reply_text(
@@ -311,7 +352,7 @@ class TradingBot:
 
     async def _send_status(self, message) -> None:
         paused = self.db.is_paused()
-        active = is_active_hours()
+        active = is_active_hours(self.db)
         auto = self.scheduler.is_auto_enabled
         threshold = self.db.get_importance_threshold()
 
@@ -469,7 +510,7 @@ class TradingBot:
 
         await update.message.reply_text(f"📊 {len(new_items)} item(s). Analyzing...")
 
-        active = is_active_hours()
+        active = is_active_hours(self.db)
         total_cost = 0.0
         sent_count = 0
         queued_count = 0
@@ -707,7 +748,7 @@ class TradingBot:
 
     async def _send_queue(self, message) -> None:
         stats = self.db.get_queue_count()
-        active = is_active_hours()
+        active = is_active_hours(self.db)
         threshold = self.db.get_importance_threshold()
         mode = "Active (sending)" if active else "Silent (queuing)"
         await message.reply_text(
@@ -856,9 +897,61 @@ class TradingBot:
                 callback_data=f"cb_imp_set_{val}",
             )])
 
-        buttons.append([InlineKeyboardButton("📋 Menu", callback_data="cb_menu")])
+        buttons.append([InlineKeyboardButton("⚙️ Settings", callback_data="cb_settings")])
 
         await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+    async def _send_hours(self, message, confirmed: str | None = None) -> None:
+        """Show current active hours with change buttons."""
+        start = self.db.get_bot_state("active_start", "7")
+        end = self.db.get_bot_state("active_end", "16")
+
+        text = ""
+        if confirmed:
+            text = f"✅ {confirmed}\n\n"
+
+        text += (
+            f"🕐 Active Hours\n\n"
+            f"Currently: {start}:00 — {end}:00 London\n"
+            f"Channel messages sent during active hours.\n"
+            f"Queued for morning digest during silent hours.\n"
+            f"Digest sent at {start}:00 London."
+        )
+
+        await message.reply_text(text, reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🔄 Change start", callback_data="cb_hours_start"),
+                InlineKeyboardButton("🔄 Change end", callback_data="cb_hours_end"),
+            ],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="cb_settings")],
+        ]))
+
+    async def _send_hours_picker(self, message, which: str) -> None:
+        """Show hour selection buttons."""
+        if which == "start":
+            hours = range(5, 11)
+            current = int(self.db.get_bot_state("active_start", "7"))
+            title = "Select start time (London):"
+            prefix = "cb_hset_start_"
+        else:
+            hours = range(14, 21)
+            current = int(self.db.get_bot_state("active_end", "16"))
+            title = "Select end time (London):"
+            prefix = "cb_hset_end_"
+
+        buttons = []
+        row = []
+        for h in hours:
+            check = "✅ " if h == current else ""
+            row.append(InlineKeyboardButton(f"{check}{h}:00", callback_data=f"{prefix}{h}"))
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="cb_hours")])
+
+        await message.reply_text(title, reply_markup=InlineKeyboardMarkup(buttons))
 
     async def _send_source_toggles(self, message) -> None:
         """Show all sources with mute/unmute toggle buttons."""
@@ -886,7 +979,7 @@ class TradingBot:
         if row:
             buttons.append(row)
 
-        buttons.append([InlineKeyboardButton("📋 Menu", callback_data="cb_menu")])
+        buttons.append([InlineKeyboardButton("⚙️ Settings", callback_data="cb_settings")])
 
         muted = sum(1 for v in enabled_map.values() if not v)
         header = f"🔇 Source Toggles ({muted} muted)\nTap to toggle:"
@@ -972,4 +1065,13 @@ class TradingBot:
 
     def run(self) -> None:
         logger.info("Starting Telegram bot...")
+
+        # Restore auto mode after bot starts
+        async def post_init(app):
+            auto_state = self.db.get_bot_state("auto_mode")
+            if auto_state == "true" and not self.db.is_paused():
+                self.scheduler.start_auto()
+                logger.info("Auto mode restored from previous session")
+
+        self.app.post_init = post_init
         self.app.run_polling(drop_pending_updates=True)

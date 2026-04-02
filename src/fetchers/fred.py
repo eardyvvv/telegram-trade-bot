@@ -74,7 +74,7 @@ class FREDFetcher:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
-                        logger.error(
+                        logger.warning(
                             "FRED API error for %s: HTTP %d", series_id, resp.status
                         )
                         return None
@@ -103,7 +103,7 @@ class FREDFetcher:
             }
 
         except Exception as e:
-            logger.error("FRED fetch failed for %s: %s", series_id, e)
+            logger.warning("FRED fetch failed for %s: %s", series_id, e)
             return None
 
     async def fetch_new_data(self, limit: int | None = None) -> list[dict]:

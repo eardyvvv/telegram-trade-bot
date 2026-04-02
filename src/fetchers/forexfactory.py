@@ -45,14 +45,14 @@ class ForexFactoryFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("ForexFactory calendar error: HTTP %d", resp.status)
+                        logger.warning("ForexFactory calendar error: HTTP %d", resp.status)
                         self.db.update_source_status("forexfactory", False)
                         return []
 
                     data = await resp.json()
 
         except Exception as e:
-            logger.error("ForexFactory fetch failed: %s", e)
+            logger.warning("ForexFactory fetch failed: %s", e)
             self.db.update_source_status("forexfactory", False)
             return []
 

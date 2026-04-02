@@ -53,13 +53,13 @@ class ONSFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("ONS error for %s: HTTP %d", series_id, resp.status)
+                        logger.warning("ONS error for %s: HTTP %d", series_id, resp.status)
                         return None
                     import json
                     data = json.loads(await resp.text())
 
         except Exception as e:
-            logger.error("ONS fetch failed for %s: %s", series_id, e)
+            logger.warning("ONS fetch failed for %s: %s", series_id, e)
             return None
 
         entries = data.get(config["data_key"], [])

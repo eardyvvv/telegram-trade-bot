@@ -80,12 +80,12 @@ class CFTCFetcher:
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("CFTC CSV download failed: HTTP %d", resp.status)
+                        logger.warning("CFTC CSV download failed: HTTP %d", resp.status)
                         self.db.update_source_status("cftc", False)
                         return []
                     text = await resp.text(encoding="utf-8", errors="replace")
         except Exception as e:
-            logger.error("CFTC download failed: %s", e)
+            logger.warning("CFTC download failed: %s", e)
             self.db.update_source_status("cftc", False)
             return []
 

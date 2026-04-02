@@ -121,7 +121,7 @@ class EIAFetcher:
                     timeout=aiohttp.ClientTimeout(total=20),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error(
+                        logger.warning(
                             "EIA API error for %s: HTTP %d", route, resp.status
                         )
                         return []
@@ -133,7 +133,7 @@ class EIAFetcher:
             return rows
 
         except Exception as e:
-            logger.error("EIA fetch failed for %s: %s", route, e)
+            logger.warning("EIA fetch failed for %s: %s", route, e)
             return []
 
     async def fetch_new_data(self, limit: int | None = None) -> list[dict]:

@@ -70,7 +70,7 @@ class BEAFetcher:
                     timeout=aiohttp.ClientTimeout(total=20),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("BEA API error: HTTP %d", resp.status)
+                        logger.warning("BEA API error: HTTP %d", resp.status)
                         return []
 
                     data = await resp.json()
@@ -79,13 +79,13 @@ class BEAFetcher:
 
             # BEA returns errors in a specific format
             if "Error" in results:
-                logger.error("BEA API error: %s", results["Error"])
+                logger.warning("BEA API error: %s", results["Error"])
                 return []
 
             return results.get("Data", [])
 
         except Exception as e:
-            logger.error("BEA fetch failed for %s: %s", table_name, e)
+            logger.warning("BEA fetch failed for %s: %s", table_name, e)
             return []
 
     async def fetch_new_data(self, limit: int | None = None) -> list[dict]:

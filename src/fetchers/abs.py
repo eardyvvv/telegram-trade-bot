@@ -48,7 +48,7 @@ class ABSFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("ABS fetch failed: %s", e)
+            logger.warning("ABS fetch failed: %s", e)
             self.db.update_source_status("abs", False)
             return []
 

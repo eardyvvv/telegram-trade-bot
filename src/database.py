@@ -101,12 +101,22 @@ class Database:
 
     # --- Bot State ---
 
-    def is_paused(self) -> bool:
+    def get_bot_state(self, key: str, default: str = "") -> str:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT value FROM bot_state WHERE key = 'paused'"
+                "SELECT value FROM bot_state WHERE key = ?", (key,)
             ).fetchone()
-            return row["value"] == "true" if row else False
+            return row["value"] if row else default
+
+    def set_bot_state(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+    def is_paused(self) -> bool:
+        return self.get_bot_state("paused", "false") == "true"
 
     def set_paused(self, paused: bool) -> None:
         with self._connect() as conn:

@@ -66,12 +66,12 @@ class EDGARFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("EDGAR error for %s: HTTP %d", company, resp.status)
+                        logger.warning("EDGAR error for %s: HTTP %d", company, resp.status)
                         return []
                     data = await resp.json()
 
         except Exception as e:
-            logger.error("EDGAR fetch failed for %s: %s", company, e)
+            logger.warning("EDGAR fetch failed for %s: %s", company, e)
             return []
 
         recent = data.get("filings", {}).get("recent", {})

@@ -42,13 +42,13 @@ class LBMAFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("LBMA error: HTTP %d", resp.status)
+                        logger.warning("LBMA error: HTTP %d", resp.status)
                         self.db.update_source_status("lbma", False)
                         return []
                     data = await resp.json()
 
         except Exception as e:
-            logger.error("LBMA fetch failed: %s", e)
+            logger.warning("LBMA fetch failed: %s", e)
             self.db.update_source_status("lbma", False)
             return []
 

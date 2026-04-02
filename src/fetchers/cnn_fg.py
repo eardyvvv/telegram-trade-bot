@@ -59,7 +59,7 @@ class CNNFearGreedFetcher:
                 await browser.close()
 
         except Exception as e:
-            logger.error("CNN Fear & Greed fetch failed: %s", e)
+            logger.warning("CNN Fear & Greed fetch failed: %s", e)
             self.db.update_source_status("cnn", False)
             return []
 

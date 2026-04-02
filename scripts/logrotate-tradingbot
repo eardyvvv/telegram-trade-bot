@@ -1,0 +1,29 @@
+/home/botadmin/trading-bot/logs/bot.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 100M
+}
+
+/home/botadmin/trading-bot/logs/watchdog.log {
+    monthly
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 10M
+}
+
+/home/botadmin/trading-bot/logs/backup.log {
+    monthly
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 5M
+}

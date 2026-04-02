@@ -47,13 +47,13 @@ class NYFedFetcher:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("NY Fed SOMA error: HTTP %d", resp.status)
+                        logger.warning("NY Fed SOMA error: HTTP %d", resp.status)
                         self.db.update_source_status("nyfed", False)
                         return []
                     data = await resp.json()
 
         except Exception as e:
-            logger.error("NY Fed fetch failed: %s", e)
+            logger.warning("NY Fed fetch failed: %s", e)
             self.db.update_source_status("nyfed", False)
             return []
 
