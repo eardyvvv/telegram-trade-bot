@@ -422,15 +422,17 @@ class Database:
             return [dict(r) for r in rows]
 
     def get_queue_count(self) -> dict:
-        """Get queue statistics."""
+        """Get queue statistics (today only for sent/digested)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT
                        COUNT(*) as total,
                        SUM(CASE WHEN sent_to_channel = 0 AND included_in_digest = 0 THEN 1 ELSE 0 END) as pending,
-                       SUM(CASE WHEN sent_to_channel = 1 THEN 1 ELSE 0 END) as sent,
-                       SUM(CASE WHEN included_in_digest = 1 THEN 1 ELSE 0 END) as digested
-                   FROM message_queue"""
+                       SUM(CASE WHEN sent_to_channel = 1 AND timestamp LIKE ? THEN 1 ELSE 0 END) as sent,
+                       SUM(CASE WHEN included_in_digest = 1 AND timestamp LIKE ? THEN 1 ELSE 0 END) as digested
+                   FROM message_queue""",
+                (f"{today}%", f"{today}%"),
             ).fetchone()
             return dict(row)
 

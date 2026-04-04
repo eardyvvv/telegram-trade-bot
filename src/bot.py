@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -179,7 +180,7 @@ class TradingBot:
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle all inline button callbacks."""
         query = update.callback_query
-        if query.from_user.id != Config.ADMIN_ID:
+        if query.from_user.id not in Config.ADMIN_IDS:
             await query.answer("Access denied")
             return
 
@@ -305,7 +306,7 @@ class TradingBot:
             )
 
     def _is_admin(self, update: Update) -> bool:
-        return update.effective_user.id == Config.ADMIN_ID
+        return update.effective_user.id in Config.ADMIN_IDS
 
     async def _admin_only(self, update: Update) -> bool:
         if not self._is_admin(update):
@@ -538,7 +539,7 @@ class TradingBot:
             message = format_instant_message({
                 **result,
                 "source": source,
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "timestamp": datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d %H:%M"),
             })
             if await self.send_to_channel(message, parse_mode="HTML"):
                 self.db.mark_queue_sent(queue_id)
@@ -1055,13 +1056,14 @@ class TradingBot:
             return False
 
     async def alert_admin(self, text: str) -> None:
-        try:
-            await self.app.bot.send_message(
-                chat_id=Config.ADMIN_ID,
-                text=f"🚨 {text}",
-            )
-        except Exception as e:
-            logger.error("Admin alert failed: %s", e)
+        for admin_id in Config.ADMIN_IDS:
+            try:
+                await self.app.bot.send_message(
+                    chat_id=admin_id,
+                    text=f"🚨 {text}",
+                )
+            except Exception as e:
+                logger.error("Admin alert failed for %d: %s", admin_id, e)
 
     def run(self) -> None:
         logger.info("Starting Telegram bot...")
