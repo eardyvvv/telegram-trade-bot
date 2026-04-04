@@ -11,7 +11,8 @@ class Config:
 
     # Telegram
     BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    ADMIN_ID: int = int(os.getenv("TELEGRAM_ADMIN_ID", "0"))
+    ADMIN_IDS: list[int] = [int(x.strip()) for x in os.getenv("TELEGRAM_ADMIN_IDS", os.getenv("TELEGRAM_ADMIN_ID", "")).split(",") if x.strip() and x.strip().isdigit()]
+    ADMIN_ID: int = ADMIN_IDS[0] if ADMIN_IDS else 0
     CHANNEL_ID: str = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
     # OpenAI
@@ -51,8 +52,8 @@ class Config:
         errors = []
         if not cls.BOT_TOKEN:
             errors.append("TELEGRAM_BOT_TOKEN is not set")
-        if cls.ADMIN_ID == 0:
-            errors.append("TELEGRAM_ADMIN_ID is not set")
+        if not cls.ADMIN_IDS:
+            errors.append("TELEGRAM_ADMIN_IDS (or TELEGRAM_ADMIN_ID) is not set")
         if not cls.OPENAI_API_KEY:
             errors.append("OPENAI_API_KEY is not set")
         return errors

@@ -25,7 +25,7 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("Configuration OK")
-    logger.info("Admin ID: %s", Config.ADMIN_ID)
+    logger.info("Admin IDs: %s", Config.ADMIN_IDS)
     logger.info("AI Model: %s", Config.OPENAI_MODEL)
 
     # Initialize database

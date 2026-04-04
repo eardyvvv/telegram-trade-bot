@@ -97,7 +97,7 @@ def format_instant_message(item: dict) -> str:
             lines.append(f"Контекст: {impact}")
 
     lines.append("")
-    lines.append(f"Источник: {source.upper()} | {timestamp} UTC")
+    lines.append(f"Источник: {source.upper()} | {timestamp} London")
 
     return "\n".join(lines)
 
@@ -414,7 +414,7 @@ class Scheduler:
                 message = format_instant_message({
                     **result,
                     "source": source_name,
-                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                    "timestamp": datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d %H:%M"),
                 })
                 sent = await self.send_fn(message, parse_mode="HTML")
                 if sent:
